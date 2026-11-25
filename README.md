@@ -1,6 +1,6 @@
-# stuff — Blackwell (`sm_120a`) Strata Port Optimization Notes
+# stuff — Blackwell (`sm_120a`) Strata Port Optimization Notes (`Inkling-2-Mini`)
 
-A collection of CUDA kernel, speculative decoding, KV-cache quantization, multi-turn caching, and memory optimizations built as a **Strata port** and measured on a single **NVIDIA RTX 5090 (32 GiB GDDR7, `sm_120a`, CUDA 13.3)** running a 26.4B-total / 5.4B-active looped-core MoE transformer (`24` physical layers, `3×` looped core = `48` attention/MoE visits, `128` routed experts/layer with `8` active, `20` sliding-window-1024 + `4` global attention layers, native 1M context).
+A collection of CUDA kernel, speculative decoding, KV-cache quantization, multi-turn caching, and memory optimizations built as a **Strata port** for **[SC117/Inkling-2-Mini-abliterated-Strata](https://huggingface.co/SC117/Inkling-2-Mini-abliterated-Strata)** (`Inkling-2-Mini-SQ-20-abliterated.strata`, 26.4B total / 5.4B active looped-core MoE, `24` physical layers, `3×` looped core = `48` attention/MoE visits, `128` routed experts/layer with `8` active, `20` sliding-window-1024 + `4` global attention layers, native 1M context), measured on a single **NVIDIA RTX 5090 (32 GiB GDDR7, `sm_120a`, CUDA 13.3)**.
 
 ---
 
@@ -15,7 +15,7 @@ A collection of CUDA kernel, speculative decoding, KV-cache quantization, multi-
 | All-VRAM context ceiling on 32 GiB | `256K` (tight / spilled) | **`512K` (`fp8`) / `1M` (`k8v4`)** | **`2×–4×`** |
 | Free VRAM after `256K` load | `< 4.0 GiB` | **`7.0–7.5 GiB`** | **`+3+ GiB`** |
 
-![Step-by-Step Decode Progression](charts/progression.png)
+<img src="charts/progression.png" alt="Step-by-Step Decode Progression" width="820" />
 
 ---
 
@@ -34,14 +34,14 @@ Each milestone below is an end-to-end RTX 5090 measurement (`5 × 512` output to
 | **6. 5L SWA-2048 Drafter** | Native 5-layer SWA-2048 block-8 drafter (`40.3 MiB` flat KV, `72.4%` acc) | **`644.9 tok/s`** | **`+184.8`** | **`420.3 tok/s`** | **`+139.2`** |
 
 ```text
-Short (54 tok)                          256K (256,012 tok)
-0. Stock        ██████████░░░░░░░░░░░░  215.0  |  ██░░░░░░░░░░░░░░░░░░░░   51.0 tok/s
-1. Spec+Attn    ████████████░░░░░░░░░░  262.0  |  ███████░░░░░░░░░░░░░░░  146.1 tok/s (+95.1)
-2. Shortlist    ███████████████░░░░░░░  322.0  |  ████████░░░░░░░░░░░░░░  162.3 tok/s (+16.2)
-3. SM120a Core  ████████████████████░░  429.4  |  █████████████░░░░░░░░░  268.6 tok/s (+106.3)
-4. Router+PDL   █████████████████████░  446.8  |  ██████████████░░░░░░░░  291.9 tok/s (+23.3)
-5. Fold+Fuse    ██████████████████████  460.1  |  █████████████░░░░░░░░░  281.1 tok/s (2x prefill)
-6. 5L SWA-2048  ███████████████████████ 644.9  |  ████████████████████░░  420.3 tok/s (+139.2)
+Stage             Short (54 tok)            256K (256,012 tok)
+0. Stock Strata   ███████░░░░░░░░░░░ 215.0  |  ██░░░░░░░░░░░░░░░░  51.0
+1. Spec+Attn      ████████░░░░░░░░░░ 262.0  |  █████░░░░░░░░░░░░░ 146.1
+2. Shortlist      ██████████░░░░░░░░ 322.0  |  ██████░░░░░░░░░░░░ 162.3
+3. SM120a Core    █████████████░░░░░ 429.4  |  █████████░░░░░░░░░ 268.6
+4. Router+PDL     ██████████████░░░░ 446.8  |  ██████████░░░░░░░░ 291.9
+5. Fold+Fuse      ██████████████░░░░ 460.1  |  █████████░░░░░░░░░ 281.1
+6. 5L SWA-2048    ██████████████████ 644.9  |  ██████████████░░░░ 420.3
 ```
 
 ---
@@ -57,7 +57,7 @@ Short (54 tok)                          256K (256,012 tok)
 | Embedded 3-layer folded Markov drafter | `408.9 tok/s` (`45.2%` acc) | `533.3 tok/s` (`57.1%` acc) | `359.2 tok/s` (`33.8%` acc) | `264 MiB` |
 | **5-layer SWA-2048 block-8 drafter** | **`588.5 tok/s` (`67.9%` acc)** | **`644.9 tok/s` (`72.4%` acc)** | **`455.2 tok/s` (`48.9%` acc)** | **`40.3 MiB` (0 growth)** |
 
-![Speculative Drafter Architecture Comparison](charts/drafters.png)
+<img src="charts/drafters.png" alt="Speculative Drafter Architecture Comparison" width="820" />
 
 ### Key Speculative Decoding Techniques
 - **Pure Sliding-Window Drafter KV (`SWA-2048`)**: Using a 5-layer drafter where every layer is sliding-window 2048 eliminates all global KV growth in the drafter (`40.3 MiB` fixed at `256K`, `512K`, and `1M`) while achieving `72.4%` block-8 acceptance (`+44%` short and `+54%` 256K speedup over 3-layer global-KV drafters).
@@ -109,7 +109,7 @@ Measured against true **`FP16 KV + BF16 dense`** ground-truth full-vocabulary lo
 | **Pure `k8v4`** | INT8 K + 4-bit V everywhere | `0.04790` | `+4.9%` | `0.78+` | lower | `7,557 MiB` |
 | **Hybrid `k8v4`** | **`40` SWA-1024 in `K8V8` + `8` Global in `K8V4`** | **`0.01748`** | **`+1.8%`** | `0.49` | **`24/24`** | **`7,547 MiB`** (`-512 MiB` Global KV) |
 
-![KV Quantization Drift and Prefill Speedup](charts/kv-quality.png)
+<img src="charts/kv-quality.png" alt="KV Quantization Drift and Prefill Speedup" width="820" />
 
 ### Key KV & Memory Findings
 - **Hybrid `SWA-K8V8 + Global-K8V4` (`2.8×` Lower KL)**: Keeping the `40` tiny sliding-window-1024 rings in 8-bit `K8V8` costs only `+10 MiB` total while compressing the `8` large Global caches to 4-bit V saves `512 MiB` at `256K` (`2.0 GiB` at `1M`) and cuts KL divergence by **`2.8×`** vs pure 4-bit V (`24/24` top-1 at `M=8`, `638.8 tok/s` short, `347.6 µs/visit` at `256K`).
@@ -120,18 +120,71 @@ Measured against true **`FP16 KV + BF16 dense`** ground-truth full-vocabulary lo
 
 ---
 
-## 6. Looped-Transformer Extended Context & Contrastive Decoding Audit
+## 6. Extended Context (`256K` / `512K` / `1M` All-VRAM) & Looped-Core Findings
+
+| Context Window | KV & Dense Mode | Global KV Size | Fits 32 GiB All-VRAM? | Decode Throughput (Full Depth) |
+|---|---|---:|---|---:|
+| **`256K` (`262,144`)** | `fp8` per-loop + `FP8 dense` + `5L SWA-2048` | `4.06 GiB` | **Yes** (`7.0 GiB` free at load) | **`420.3 tok/s`** *(measured)* |
+| **`512K` (`524,288`)** | `fp8` + `--kv-last-loop` + `FP8 dense` + `5L SWA-2048` | `4.06 GiB` | **Yes** (`7.1 GiB` free at load) | **`~300–350 tok/s`** *(est.; `575` short measured)* |
+| **`1M` (`1,048,576`)** | Hybrid `k8v4` + `--kv-last-loop` + `BF16 dense` + `5L SWA-2048` | `6.13 GiB` | **Yes** (`~2.0 GiB` headroom) | **`~220–270 tok/s`** *(est.; `~200–222` @ 99K live)* |
+
+<img src="charts/context-scaling.png" alt="256K, 512K, and 1M All-VRAM Context Scaling" width="820" />
 
 - **Shared Core Loop KV (`--kv-last-loop`, `-50%` KV Memory)**:
   - Sharing the looped core's KV cache across passes (`20` SWA + `4` Global caches instead of `40` + `8`) while keeping all `48` per-pass `ShortConv4` states separate cuts KV VRAM in half.
   - **Unlocks `512K` all-VRAM** with `fp8` (`7,265 MiB` free after load, `575.0 tok/s` short, `3/3` live probes) and **`1M` (`1,048,576`) all-VRAM** on 32 GiB when combined with `SWA-2048` drafting + Hybrid `k8v4` (`6.13 GiB` Global KV at `1M`) + native BF16 dense (`-1.03 GiB` side-copy, `~2 GiB` headroom).
   - **Trade-off**: Introduces `0.177` nats logit KL (`+19.4%` next-token perplexity drift vs `per_loop`), so it is strictly opt-in for `512K–1M` workloads rather than `256K` where `per_loop` already fits with `7 GiB` free.
-- **Loop Contrastive Decoding (Audited & Skipped)**:
-  - Extrapolating `h' = h_R + ω(h_R - h_b)` improves accuracy on **variable-depth** looped models trained with per-pass readout supervision, where earlier passes already produce valid token distributions.
-  - On **fixed-3-pass** checkpoints trained only on the final pass (with pass-specific loop gates and separate per-pass KV/ShortConv states), skipping passes breaks multi-pass drafter taps, `LoopCD-Logits` slows decode by `18–22%` by duplicating the coda + `lm_head`, and fixed-depth ablations in the paper itself *lost* accuracy (`-1.67` AIME pass@1).
+- **LoopCD (Loop Contrastive Decoding — Audited & Skipped)**:
+  - `LoopCD` (`LoopCD-Hidden`: `h' = h_R + ω(h_R - h_b)`, `LoopCD-Logits`: extrapolating final vs earlier pass logits) improves reasoning accuracy on **variable-depth** looped models trained with per-pass readout supervision, where earlier passes already produce valid token distributions.
+  - On **fixed-3-pass** checkpoints trained only on the final pass (with pass-specific loop gates and separate per-pass KV/ShortConv states), skipping passes breaks multi-pass drafter taps, `LoopCD-Logits` slows decode by `18–22%` by duplicating the coda + `lm_head`, and fixed-depth ablations lost accuracy (`-1.67` pass@1), so `LoopCD` was intentionally left out.
 
 ---
 
 ## 7. Lazy-Loaded CUDA BF16 Vision Encoder
 
 - Moving the 23-layer vision transformer to a lazy-loaded CUDA BF16 Tensor-Core path (fused QKV, axial 2D RoPE + LayerNorm + LayerScale + exact GELU kernels, and `Q_CHUNK = 512` chunked batched attention for bounded $O(S)$ scratch up to `4096×4096`) keeps **`0` idle VRAM** on text-only workloads while encoding `640×480` in **`15.1 ms`** and `1280×960` in **`60.6 ms`** (vs `2,626 ms` on CPU, `rel_rms = 0.012`).
+
+---
+
+## 8. Additional Tooling, Launcher, & Verification Work
+
+- **Go TUI Launcher & PowerShell Suite**: Built a cross-compiled Windows Go TUI picker (`start` / `stop` / `status` / `log`) with 13 pre-configured profiles covering `256K` / `512K` / `1M` × `medium` / `high` / `xhigh` effort + Vision + KV precision modes, live GPU VRAM/temperature/power/tok-s/draft-acceptance telemetry, exact PID/path-isolated shutdown, and `FileStream`-polled live log tailing that works cleanly over network/UNC shares.
+- **Standalone CUDA Unit Tests & Numerical Harness**: Added isolated CUDA unit tests covering verify attention (`14/14` cases across `FP16/FP8/K8V8/K8V4`), prefill FlashAttention (`14/14`), MoE Tensor-Core decode, cluster small kernels, GPU full-vocab rejection sampling (`90/90` seeds), and CUDA vision parity, plus a teacher-forced full-vocabulary KL harness comparing every quantization mode against true `FP16 KV + BF16 dense` ground truth.
+- **TUI Responsive Layout Tests**: Automated layout verification rendering all 13 profiles across 11 terminal dimensions (`150×50` down to `24×7`) including overflow paging, numeric jumps, and confirmation/cancel workflows.
+
+---
+
+## 9. Copy-Paste Brief (For Your Coding Agent / LLM)
+
+Paste the block below into a coding agent working on a Strata `sm_120a` CUDA build for `Inkling-2-Mini`:
+
+```text
+Optimize Strata's CUDA backend for Inkling-2-Mini (24 layers, 3x looped core = 48 visits,
+128x8 MoE, 20 SWA-1024 + 4 Global attention layers) on RTX 5090 (sm_120a, 32 GiB):
+
+1. Attention verify & prefill:
+   - Replace naive target verify with double-buffered cp.async FP8/K8V8/K8V4 tiled GQA-3
+     tree-verify (M=1..8, 42 global splits, 0 spills, ~1.5 TB/s).
+   - Add SM120a BM=64/BN=64 GQA-3 FlashAttention prefill with branchless far-tile loop
+     across FP16/FP8/K8V8/K8V4 and skip unused prefill scratch buffers.
+2. MoE, dense FP8 & small kernels:
+   - Add mma.m16n8k16 SF4/MX8 MoE decode with warp-level expert dedup and SM120a PDL overlap.
+   - Pack all 177 dense projections (incl. sink/ShortConv) into 8-way multi-proj row-scaled FP8.
+   - Use 16-CTA cluster BF16 router + loop controllers emitting out_f16 directly into MoE;
+     fuse logit softcap into unembed and swap KV/block bank pointers instead of D2D memcpy.
+3. Speculative decoding & multi-turn cache:
+   - Support a 5-layer SWA-2048 block-8 drafter (flat 40 MiB KV) with dynamic 49K shortlist,
+     prefix-causal {2,4,8} width scheduler, lookahead overlap, and 1-launch GPU full-vocab
+     rejection sampling (including top_k=0).
+   - Add dual prompt_ckpt + branched turn_ckpt aligned to end-of-sampling boundaries, plus
+     tree-staged KV quantization roundtrip.
+4. VRAM & extended context (512K / 1M):
+   - Trim unused embedded drafter weights (357 MiB) when using an external drafter or draft off.
+   - Keep 40 SWA rings in 8-bit K8V8 when --kv k8v4 is set (Hybrid SWA-K8V8 + Global-K8V4)
+     with multi-clip L2-MSE scale search.
+   - Add opt-in --kv-last-loop (shared core loop KV, preserving 48 ShortConv4 states) for
+     512K (fp8) and 1M (hybrid k8v4 + BF16 dense) all-VRAM on 32 GiB.
+   - Lazy-load the 23-layer CUDA BF16 vision encoder on first image (0 idle VRAM on text).
+5. Verify every change with standalone CUDA parity tests, full-vocab KL vs FP16 KV + BF16
+   dense ground truth, and end-to-end short + 256K benchmarks.
+```
